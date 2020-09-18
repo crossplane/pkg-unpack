@@ -21,16 +21,16 @@ import (
 	"fmt"
 	"os"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured/unstructuredscheme"
+
 	"github.com/pkg/errors"
 	"github.com/spf13/afero"
 	"gopkg.in/yaml.v2"
-	crds "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/crossplane/crossplane-runtime/pkg/parser"
-
-	"github.com/crossplane/crossplane/apis/apiextensions"
-	"github.com/crossplane/crossplane/apis/pkg/meta/v1alpha1"
 )
 
 func main() {
@@ -41,21 +41,14 @@ func main() {
 }
 
 func Run(ctx context.Context) error {
-	metaScheme, err := v1alpha1.SchemeBuilder.Build()
-	if err != nil {
-		panic(errors.Wrap(err, "cannot build meta scheme"))
+	uScheme := struct {
+		runtime.ObjectTyper
+		runtime.ObjectCreater
+	}{
+		ObjectTyper:   unstructuredscheme.NewUnstructuredObjectTyper(),
+		ObjectCreater: unstructuredscheme.NewUnstructuredCreator(),
 	}
-	objScheme := runtime.NewScheme()
-	for _, add := range []func(*runtime.Scheme) error{
-		apiextensions.AddToScheme,
-		crds.AddToScheme,
-	} {
-		if err := add(objScheme); err != nil {
-			panic(errors.Wrap(err, "cannot add object schemes"))
-		}
-	}
-
-	p := parser.New(metaScheme, objScheme)
+	p := parser.New(uScheme, uScheme)
 	b := parser.NewFsBackend(afero.NewReadOnlyFs(afero.NewOsFs()), parser.FsDir("."), parser.FsFilters(parser.SkipNotYAML()))
 	reader, err := b.Init(ctx)
 	if err != nil {
@@ -70,7 +63,11 @@ func Run(ctx context.Context) error {
 		if m.GetObjectKind().GroupVersionKind().Empty() {
 			continue
 		}
-		out, err := yaml.Marshal(m)
+		u, ok := m.(*unstructured.Unstructured)
+		if !ok {
+			return errors.New("object cannot be casted into *unstructured.Unstructured")
+		}
+		out, err := yaml.Marshal(u.UnstructuredContent())
 		if err != nil {
 			return errors.Wrap(err, "cannot marshall meta object into yaml")
 		}
