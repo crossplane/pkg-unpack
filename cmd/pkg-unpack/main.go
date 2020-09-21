@@ -69,7 +69,7 @@ func Run(ctx context.Context) error {
 		}
 		out, err := yaml.Marshal(u.UnstructuredContent())
 		if err != nil {
-			return errors.Wrap(err, "cannot marshall meta object into yaml")
+			return errors.Wrap(err, "cannot marshal the object into yaml")
 		}
 		// Leaving the new line character to the OS instead of one fmt.Printf.
 		fmt.Println("---")
