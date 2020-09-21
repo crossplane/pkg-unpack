@@ -1,0 +1,42 @@
+# Required. Must be as below.
+apiVersion: meta.pkg.crossplane.io/v1alpha1
+# Required. Must be as below.
+kind: Configuration
+# Required. Note that Crossplane is aware only of the name and annotations
+# metadata fields. Other fields (e.g. labels) will be preserved but opaque.
+metadata:
+  # Required. Must comply with Kubernetes API conventions.
+  name: configuration-example
+  # Optional. Must comply with Kubernetes API conventions. Annotations are
+  # opaque to Crossplane, which will replicate them to the annotations of a
+  # PackageRevision when this package is unpacked, but otherwise ignore them.
+  # Systems such as package registries may extend this specification to require
+  # or encourage specific annotations.
+  annotations:
+    company: Upbound
+    maintainer: Nic Cope <negz@upbound.io>
+    keywords: cloud-native, kubernetes, example
+    source: github.com/crossplane-contrib/config-example
+    license: Apache-2.0
+    description: |
+      The Example configuration adds example resources to Crossplane.
+    provider: example
+# Required.
+spec:
+  # Optional. Specifies a Crossplane version that the package is compatible with.
+  crossplane: master
+  # Optional. Used by Crossplane to ensure any dependencies of a configuration
+  # installed and running before the configuration is installed.
+  dependsOn:
+    # Required. Specifies an OCI image containing a package dependency. This key
+    # may be either 'provider' or 'configuration'. This is sugar; in either case
+    # the package manager determines whether the depencency is really a Provider
+    # or a Configuration by unpacking it and inspecting its kind.
+  - provider: crossplane/provider-aws
+    # Required. Will be extended to support version ranges in future, but
+    # currently treated as a specific version tag.
+    version: master
+    # Required. Specifies an OCI image containing a package dependency. This key
+    # may be either 'provider' or 'configuration'. This is sugar; in either case
+    # the package manager determines whether the depencency is really a Provider
+    # or a Configuration by unpacking it and inspecting its kind.
