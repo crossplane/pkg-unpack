@@ -17,63 +17,71 @@ limitations under the License.
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
-
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured/unstructuredscheme"
 
 	"github.com/pkg/errors"
 	"github.com/spf13/afero"
-	"gopkg.in/yaml.v2"
-	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured/unstructuredscheme"
+	"k8s.io/apimachinery/pkg/runtime/serializer/json"
+	"k8s.io/apimachinery/pkg/util/yaml"
 
 	"github.com/crossplane/crossplane-runtime/pkg/parser"
 )
 
 func main() {
-	if err := Run(context.Background()); err != nil {
+	be := parser.NewFsBackend(afero.NewReadOnlyFs(afero.NewOsFs()), parser.FsDir("."), parser.FsFilters(parser.SkipNotYAML()))
+	src, err := be.Init(context.Background())
+	if err != nil {
+		// NOTE(negz): fmt.Print prints to stderr.
+		fmt.Print(err.Error())
+		os.Exit(1)
+	}
+	defer src.Close()
+
+	if err := Copy(os.Stdout, src); err != nil {
 		fmt.Print(err.Error())
 		os.Exit(1)
 	}
 }
 
-func Run(ctx context.Context) error {
-	uScheme := struct {
-		runtime.ObjectTyper
-		runtime.ObjectCreater
-	}{
-		ObjectTyper:   unstructuredscheme.NewUnstructuredObjectTyper(),
-		ObjectCreater: unstructuredscheme.NewUnstructuredCreator(),
-	}
-	p := parser.New(uScheme, uScheme)
-	b := parser.NewFsBackend(afero.NewReadOnlyFs(afero.NewOsFs()), parser.FsDir("."), parser.FsFilters(parser.SkipNotYAML()))
-	reader, err := b.Init(ctx)
-	if err != nil {
-		return errors.Wrap(err, "cannot initialize filesystem backend")
-	}
-	pkg, err := p.Parse(ctx, reader)
-	if err != nil {
-		return errors.Wrap(err, "cannot parse the files")
-	}
-	list := append(pkg.GetMeta(), pkg.GetObjects()...)
-	for _, m := range list {
-		if m.GetObjectKind().GroupVersionKind().Empty() {
-			continue
+// Copy to dst from src, returning an error if src is not a YAML
+// stream containing only valid Kubernetes objects.
+func Copy(dst io.Writer, src io.Reader) error {
+	y := yaml.NewYAMLReader(bufio.NewReader(src))
+	d := json.NewSerializerWithOptions(
+		json.DefaultMetaFactory,
+		unstructuredscheme.NewUnstructuredCreator(),
+		unstructuredscheme.NewUnstructuredObjectTyper(),
+		json.SerializerOptions{Yaml: true})
+
+	b := &bytes.Buffer{}
+	for {
+		doc, err := y.Read()
+		if err != nil && err != io.EOF {
+			return errors.New("cannot read YAML document")
 		}
-		u, ok := m.(*unstructured.Unstructured)
-		if !ok {
-			return errors.New("object cannot be casted into *unstructured.Unstructured")
+		if err == io.EOF {
+			break
 		}
-		out, err := yaml.Marshal(u.UnstructuredContent())
+		o, _, err := d.Decode(doc, nil, nil)
 		if err != nil {
-			return errors.Wrap(err, "cannot marshal the object into yaml")
+			return errors.Wrap(err, "cannot parse YAML document")
 		}
-		// Leaving the new line character to the OS instead of one fmt.Printf.
-		fmt.Println("---")
-		fmt.Print(string(out))
+
+		_, _ = b.Write([]byte("---\n")) // Writing to a buffer never errors.
+		if err := d.Encode(o, b); err != nil {
+			return errors.Wrap(err, "cannot encode YAML document")
+		}
+		if _, err := io.Copy(dst, b); err != nil {
+			return errors.Wrap(err, "cannot output YAML document")
+		}
+
+		b.Reset()
 	}
 	return nil
 }
