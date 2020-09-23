@@ -21,21 +21,20 @@ import (
 	"fmt"
 	"os"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured/unstructuredscheme"
-
 	"github.com/pkg/errors"
 	"github.com/spf13/afero"
-	"gopkg.in/yaml.v2"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured/unstructuredscheme"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer/json"
 
 	"github.com/crossplane/crossplane-runtime/pkg/parser"
 )
 
 func main() {
 	if err := Run(context.Background()); err != nil {
-		fmt.Print(err.Error())
+		// We want our YAML stream written to stdout, but errors written to
+		// stderr. println prints to stderr.
+		println(err.Error())
 		os.Exit(1)
 	}
 }
@@ -48,32 +47,35 @@ func Run(ctx context.Context) error {
 		ObjectTyper:   unstructuredscheme.NewUnstructuredObjectTyper(),
 		ObjectCreater: unstructuredscheme.NewUnstructuredCreator(),
 	}
-	p := parser.New(uScheme, uScheme)
+
+	// We want to leverage the package parser, but we don't need to make a
+	// distinction between package metadata and payload objects. Passing an
+	// empty 'metadata' scheme and an unstructured 'object' scheme will cause
+	// the parser to treat any valid Kubernetes YAML (including package metadata
+	// objects) as regular payload objects.
+	p := parser.New(runtime.NewScheme(), uScheme)
 	b := parser.NewFsBackend(afero.NewReadOnlyFs(afero.NewOsFs()), parser.FsDir("."), parser.FsFilters(parser.SkipNotYAML()))
 	reader, err := b.Init(ctx)
 	if err != nil {
 		return errors.Wrap(err, "cannot initialize filesystem backend")
 	}
+
+	// Parse will load any files that end with .yaml and that appear to be
+	// valid Kubernetes objects (e.g. have an apiVersion and kind) and expose
+	// them via its GetObjects method. Files that end with .yaml but that are
+	// not valid YAML, or that don't have an apiVersion and kind, will result in
+	// an error being returned.
 	pkg, err := p.Parse(ctx, reader)
 	if err != nil {
 		return errors.Wrap(err, "cannot parse the files")
 	}
-	list := append(pkg.GetMeta(), pkg.GetObjects()...)
-	for _, m := range list {
-		if m.GetObjectKind().GroupVersionKind().Empty() {
-			continue
-		}
-		u, ok := m.(*unstructured.Unstructured)
-		if !ok {
-			return errors.New("object cannot be casted into *unstructured.Unstructured")
-		}
-		out, err := yaml.Marshal(u.UnstructuredContent())
-		if err != nil {
+
+	s := json.NewSerializerWithOptions(json.DefaultMetaFactory, uScheme, uScheme, json.SerializerOptions{Yaml: true})
+	for _, m := range pkg.GetObjects() {
+		fmt.Println("---") // fmt.Println writes to stdout.
+		if err := s.Encode(m, os.Stdout); err != nil {
 			return errors.Wrap(err, "cannot marshal the object into yaml")
 		}
-		// Leaving the new line character to the OS instead of one fmt.Printf.
-		fmt.Println("---")
-		fmt.Print(string(out))
 	}
 	return nil
 }
