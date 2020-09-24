@@ -34,8 +34,25 @@ fallthrough: submodules
 	@echo Initial setup complete. Running make again . . .
 	@make
 
+# Generate a coverage report for cobertura applying exclusions on
+# - generated file
+cobertura:
+	@cat $(GO_TEST_OUTPUT)/coverage.txt | \
+		grep -v zz_generated.deepcopy | \
+		$(GOCOVER_COBERTURA) > $(GO_TEST_OUTPUT)/cobertura-coverage.xml
 
-.PHONY: submodules fallthrough
+# Ensure a PR is ready for review.
+reviewable: lint
+	@go mod tidy
+
+# Ensure branch is clean.
+check-diff: reviewable
+	@$(INFO) checking that branch is clean
+	@test -z "$$(git status --porcelain)" || $(FAIL)
+	@$(OK) branch is clean
+
+
+.PHONY: cobertura submodules fallthrough reviewable check-diff
 
 # ====================================================================================
 # Special Targets
